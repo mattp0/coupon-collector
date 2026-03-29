@@ -1,38 +1,54 @@
+import os
+
 import streamlit as st
+
+
+def _load_allowed_emails() -> set[str]:
+    """Load the email allowlist from Streamlit secrets or environment.
+
+    In Streamlit Cloud, set this in the Secrets manager:
+
+        [auth]
+        allowed_emails = "alice@example.com,bob@example.com"
+
+    Locally, you can set the environment variable instead:
+
+        ALLOWED_EMAILS="alice@example.com,bob@example.com"
+
+    If neither is set, any authenticated Google account is permitted.
+    """
+    raw = ""
+
+    try:
+        raw = st.secrets.get("auth", {}).get("allowed_emails", "")
+    except Exception:
+        pass
+
+    if not raw:
+        raw = os.environ.get("ALLOWED_EMAILS", "")
+
+    if not raw:
+        return set()
+
+    return {email.strip().lower() for email in raw.split(",") if email.strip()}
 
 
 def require_login():
     """Gate the entire application behind Google SSO.
 
-    On Streamlit Cloud, configure the following in the app's Secrets manager
-    (or locally in .streamlit/secrets.toml):
-
-        [auth]
-        redirect_uri    = "https://your-app.streamlit.app/oauth2callback"
-        cookie_secret   = "<random string, e.g. from secrets.token_hex(32)>"
-
-        [auth.google]
-        client_id       = "<from Google Cloud Console>"
-        client_secret   = "<from Google Cloud Console>"
-
-    Optionally restrict access to specific email addresses by setting
-    ALLOWED_EMAILS below. Leave the set empty to allow any Google account.
-
-    Returns the authenticated user object (user.email, user.name, user.picture).
-    Calls st.stop() if the user is not authenticated.
+    Returns the authenticated user object (user.email, user.name).
+    Calls st.stop() if the user is not authenticated or not authorised.
     """
-    ALLOWED_EMAILS: set[str] = {
-        "matthew.r.perry25@gmail.com",
-        "jennaperry307@gmail.com",
-    }
-
     if not st.user.is_logged_in:
         st.login("google")
         st.stop()
- 
-    if ALLOWED_EMAILS and st.user.email not in ALLOWED_EMAILS:
+
+    allowed_emails = _load_allowed_emails()
+
+    if allowed_emails and st.user.email.lower() not in allowed_emails:
         st.error(
-            f"Access denied. The account {st.user.email} is not authorised to use this application."
+            f"Access denied. The account {st.user.email} is not authorised "
+            "to use this application."
         )
         st.stop()
 
