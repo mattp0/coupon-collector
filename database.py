@@ -121,6 +121,22 @@ def init_db() -> None:
                 ON CONFLICT (key) DO NOTHING
             """)
 
+            for table in ("manufacturers", "coupons", "settings", "reports", "report_coupons"):
+                cursor.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
+                cursor.execute(f"""
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM pg_policies
+                            WHERE schemaname = 'public'
+                              AND tablename  = '{table}'
+                              AND policyname = 'allow_all'
+                        ) THEN
+                            CREATE POLICY allow_all ON {table} FOR ALL USING (true) WITH CHECK (true);
+                        END IF;
+                    END $$
+                """)
+
 
 # ---------------------------------------------------------------------------
 # Manufacturers
