@@ -211,3 +211,5 @@ pyvenv.cfg
 Scripts
 .venv/
 secrets.toml
+share/
+etc/
