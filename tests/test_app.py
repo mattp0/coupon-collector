@@ -30,7 +30,8 @@ def _mock_auth_module() -> ModuleType:
 sys.modules.setdefault("streamlit", _mock_streamlit_module())
 sys.modules.setdefault("auth", _mock_auth_module())
 
-from app import STATUS_LABELS, _build_pdf_from_snapshot, _save_report  # noqa: E402
+from app import STATUS_LABELS, _build_pdf_from_snapshot  # noqa: E402
+from database import save_report  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -39,7 +40,7 @@ from app import STATUS_LABELS, _build_pdf_from_snapshot, _save_report  # noqa: E
 
 def _make_conn_mock():
     cursor = MagicMock()
-    cursor.fetchone.return_value = (42,)  # simulate RETURNING id
+    cursor.fetchone.return_value = (42,)
     conn = MagicMock()
     conn.cursor.return_value = cursor
     return conn, cursor
@@ -72,12 +73,12 @@ def test_status_labels_values_are_non_empty_strings():
 
 
 # ---------------------------------------------------------------------------
-# _save_report
+# save_report
 # ---------------------------------------------------------------------------
 
 def test_save_report_returns_report_id():
     conn, cursor = _make_conn_mock()
-    report_id = _save_report(
+    report_id = save_report(
         conn=conn,
         ref_number="REF-001",
         manufacturer="Acme",
@@ -87,14 +88,13 @@ def test_save_report_returns_report_id():
         total_handling=0.08,
         grand_total=3.08,
         coupons=SAMPLE_COUPONS,
-        handling_fee_val=0.08,
     )
     assert report_id == 42
 
 
 def test_save_report_inserts_report_row():
     conn, cursor = _make_conn_mock()
-    _save_report(
+    save_report(
         conn=conn,
         ref_number="REF-001",
         manufacturer="Acme",
@@ -104,7 +104,6 @@ def test_save_report_inserts_report_row():
         total_handling=0.08,
         grand_total=3.08,
         coupons=SAMPLE_COUPONS,
-        handling_fee_val=0.08,
     )
     first_call_sql = cursor.execute.call_args_list[0].args[0]
     assert "INSERT INTO reports" in first_call_sql
@@ -113,7 +112,7 @@ def test_save_report_inserts_report_row():
 
 def test_save_report_inserts_correct_coupon_count():
     conn, cursor = _make_conn_mock()
-    _save_report(
+    save_report(
         conn=conn,
         ref_number="REF-001",
         manufacturer="Acme",
@@ -123,7 +122,6 @@ def test_save_report_inserts_correct_coupon_count():
         total_handling=0.08,
         grand_total=3.08,
         coupons=SAMPLE_COUPONS,
-        handling_fee_val=0.08,
     )
     # First execute call params: (..., coupon_count, ...)
     params = cursor.execute.call_args_list[0].args[1]
@@ -132,7 +130,7 @@ def test_save_report_inserts_correct_coupon_count():
 
 def test_save_report_inserts_one_snapshot_row_per_coupon():
     conn, cursor = _make_conn_mock()
-    _save_report(
+    save_report(
         conn=conn,
         ref_number="REF-001",
         manufacturer="Acme",
@@ -142,7 +140,6 @@ def test_save_report_inserts_one_snapshot_row_per_coupon():
         total_handling=0.08,
         grand_total=3.08,
         coupons=SAMPLE_COUPONS,
-        handling_fee_val=0.08,
     )
     snapshot_calls = [
         c for c in cursor.execute.call_args_list
@@ -153,7 +150,7 @@ def test_save_report_inserts_one_snapshot_row_per_coupon():
 
 def test_save_report_commits_and_closes_cursor():
     conn, cursor = _make_conn_mock()
-    _save_report(
+    save_report(
         conn=conn,
         ref_number="REF-001",
         manufacturer="Acme",
@@ -163,7 +160,6 @@ def test_save_report_commits_and_closes_cursor():
         total_handling=0.08,
         grand_total=3.08,
         coupons=SAMPLE_COUPONS,
-        handling_fee_val=0.08,
     )
     conn.commit.assert_called_once()
     cursor.close.assert_called_once()
@@ -171,7 +167,7 @@ def test_save_report_commits_and_closes_cursor():
 
 def test_save_report_rounds_totals_to_two_decimal_places():
     conn, cursor = _make_conn_mock()
-    _save_report(
+    save_report(
         conn=conn,
         ref_number="REF-001",
         manufacturer="Acme",
@@ -181,7 +177,6 @@ def test_save_report_rounds_totals_to_two_decimal_places():
         total_handling=0.004,
         grand_total=1.009,
         coupons=SAMPLE_COUPONS,
-        handling_fee_val=0.08,
     )
     params = cursor.execute.call_args_list[0].args[1]
     assert round(1.005, 2) in params
@@ -196,7 +191,7 @@ def test_save_report_rounds_totals_to_two_decimal_places():
 def test_build_pdf_returns_none_for_missing_report():
     conn = MagicMock()
 
-    with patch("app.pd.read_sql", return_value=pd.DataFrame()):
+    with patch("database.pd.read_sql", return_value=pd.DataFrame()):
         result = _build_pdf_from_snapshot(report_id=999, conn=conn, settings=SAMPLE_SETTINGS)
 
     assert result is None
@@ -230,7 +225,7 @@ def test_build_pdf_returns_pdf_bytes_for_valid_report():
     read_sql_returns = [report_df, snapshot_df, mfr_df]
 
     conn = MagicMock()
-    with patch("app.pd.read_sql", side_effect=read_sql_returns):
+    with patch("database.pd.read_sql", side_effect=read_sql_returns):
         result = _build_pdf_from_snapshot(report_id=1, conn=conn, settings=SAMPLE_SETTINGS)
 
     assert isinstance(result, bytes)
