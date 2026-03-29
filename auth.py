@@ -22,7 +22,7 @@ def require_login():
     Calls st.stop() if the user is not authenticated.
     """
     ALLOWED_EMAILS: set[str] = {
-        # "alice@example.com",
+        "matthew.r.perry25@gmail.com",
         # "bob@example.com",
     }
 
