@@ -26,9 +26,10 @@ def require_login():
         # "bob@example.com",
     }
 
-    user = st.login("google")
-
-    if user is None:
+    user = st.experimental_user
+ 
+    if not user.is_logged_in:
+        st.login("google")
         st.stop()
 
     if ALLOWED_EMAILS and user.email not in ALLOWED_EMAILS:
