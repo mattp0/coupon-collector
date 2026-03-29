@@ -471,9 +471,14 @@ def page_settings() -> None:
                 st.success("Settings saved.")
 
 
+@st.cache_resource
+def _init_db_once() -> None:
+    init_db()
+
+
 def main() -> None:
     st.set_page_config(page_title="Coupon Report Manager", layout="wide")
-    init_db()
+    _init_db_once()
 
     user = require_login()
 
