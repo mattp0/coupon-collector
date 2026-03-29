@@ -50,6 +50,38 @@ def init_db() -> None:
     """)
 
     cursor.execute("""
+        CREATE TABLE IF NOT EXISTS reports (
+            id               SERIAL PRIMARY KEY,
+            ref_number       TEXT NOT NULL,
+            manufacturer     TEXT NOT NULL,
+            period_start     DATE NOT NULL,
+            period_end       DATE NOT NULL,
+            generated_date   DATE NOT NULL,
+            coupon_count     INTEGER NOT NULL,
+            total_face       NUMERIC(10, 2) NOT NULL,
+            total_handling   NUMERIC(10, 2) NOT NULL,
+            grand_total      NUMERIC(10, 2) NOT NULL,
+            status           TEXT NOT NULL DEFAULT 'draft',
+            sent_date        DATE,
+            response_date    DATE,
+            payment_amount   NUMERIC(10, 2),
+            check_reference  TEXT,
+            notes            TEXT
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS report_coupons (
+            id             SERIAL PRIMARY KEY,
+            report_id      INTEGER NOT NULL REFERENCES reports(id) ON DELETE CASCADE,
+            coupon_id      TEXT NOT NULL,
+            amount         NUMERIC(10, 2) NOT NULL,
+            handling_fee   BOOLEAN NOT NULL DEFAULT FALSE,
+            collected_date DATE NOT NULL
+        )
+    """)
+
+    cursor.execute("""
         INSERT INTO settings (key, value) VALUES
             ('company_name',    ''),
             ('company_address', ''),

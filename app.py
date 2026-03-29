@@ -1,4 +1,5 @@
 from datetime import date
+from typing import Optional
 
 import pandas as pd
 import psycopg2
@@ -9,6 +10,101 @@ from database import get_connection, init_db
 from pdf_generator import generate_pdf
 
 NEW_MANUFACTURER_SENTINEL = "Add new manufacturer..."
+
+STATUS_LABELS = {
+    "draft":     "Draft",
+    "sent":      "Sent",
+    "responded": "Response Received",
+}
+
+
+def _save_report(
+    conn,
+    ref_number: str,
+    manufacturer: str,
+    period_start: date,
+    period_end: date,
+    total_face: float,
+    total_handling: float,
+    grand_total: float,
+    coupons: pd.DataFrame,
+    handling_fee_val: float,
+) -> int:
+    """Insert a report and its coupon snapshot. Returns the new report id."""
+    cursor = conn.cursor()
+    cursor.execute(
+        """INSERT INTO reports
+               (ref_number, manufacturer, period_start, period_end,
+                generated_date, coupon_count, total_face, total_handling,
+                grand_total, status)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, 'draft')
+           RETURNING id""",
+        (
+            ref_number,
+            manufacturer,
+            period_start,
+            period_end,
+            date.today(),
+            len(coupons),
+            round(total_face, 2),
+            round(total_handling, 2),
+            round(grand_total, 2),
+        ),
+    )
+    report_id: int = cursor.fetchone()[0]
+
+    for _, row in coupons.iterrows():
+        cursor.execute(
+            """INSERT INTO report_coupons
+                   (report_id, coupon_id, amount, handling_fee, collected_date)
+               VALUES (%s, %s, %s, %s, %s)""",
+            (
+                report_id,
+                str(row["coupon_id"]),
+                float(row["amount"]),
+                bool(row["handling_fee"]),
+                row["collected_date"],
+            ),
+        )
+
+    conn.commit()
+    cursor.close()
+    return report_id
+
+
+def _build_pdf_from_snapshot(report_id: int, conn, settings: dict) -> Optional[bytes]:
+    """Regenerate a PDF from the stored report_coupons snapshot."""
+    report = pd.read_sql(
+        "SELECT * FROM reports WHERE id = %s", conn, params=(report_id,)
+    )
+    if report.empty:
+        return None
+
+    snapshot = pd.read_sql(
+        """SELECT coupon_id, amount, handling_fee, collected_date
+           FROM report_coupons WHERE report_id = %s
+           ORDER BY coupon_id, collected_date""",
+        conn,
+        params=(report_id,),
+    )
+
+    row = report.iloc[0]
+    mfr_row = pd.read_sql(
+        "SELECT address FROM manufacturers WHERE name = %s",
+        conn,
+        params=(row["manufacturer"],),
+    )
+    mfr_address = mfr_row["address"].iloc[0] if not mfr_row.empty else ""
+
+    return generate_pdf(
+        company_settings=settings,
+        manufacturer=row["manufacturer"],
+        manufacturer_address=mfr_address,
+        ref_number=row["ref_number"],
+        start_date=row["period_start"],
+        end_date=row["period_end"],
+        coupons=snapshot,
+    )
 
 
 def page_enter_coupons() -> None:
@@ -79,7 +175,6 @@ def page_enter_coupons() -> None:
     if recent.empty:
         st.info("No coupons entered yet.")
     else:
-        # Check if an edit is in progress
         editing_id = st.session_state.get("editing_coupon_id")
 
         for _, row in recent.iterrows():
@@ -225,8 +320,8 @@ def page_generate_reports() -> None:
     st.dataframe(display, use_container_width=True, hide_index=True)
 
     handling_fee_rate = float(settings.get("handling_fee", "0.08"))
-    total_face = df["amount"].sum()
-    total_handling = df["handling_fee"].apply(lambda x: handling_fee_rate if x else 0.0).sum()
+    total_face = float(df["amount"].sum())
+    total_handling = float(df["handling_fee"].apply(lambda x: handling_fee_rate if x else 0.0).sum())
     grand_total = total_face + total_handling
 
     c1, c2, c3 = st.columns(3)
@@ -253,6 +348,20 @@ def page_generate_reports() -> None:
             end_date=end_date,
             coupons=df,
         )
+
+        report_id = _save_report(
+            conn=conn,
+            ref_number=ref_number,
+            manufacturer=selected_mfr,
+            period_start=start_date,
+            period_end=end_date,
+            total_face=total_face,
+            total_handling=total_handling,
+            grand_total=grand_total,
+            coupons=df,
+            handling_fee_val=handling_fee_rate,
+        )
+
         filename = f"coupon_report_{selected_mfr.replace(' ', '_')}_{today_str}.pdf"
         st.download_button(
             label="Download PDF",
@@ -261,6 +370,167 @@ def page_generate_reports() -> None:
             mime="application/pdf",
             use_container_width=True,
         )
+        st.info(f"Report saved to history (ID {report_id}).")
+
+    conn.close()
+
+
+def page_report_history() -> None:
+    st.title("Report History")
+
+    conn = get_connection()
+    settings = pd.read_sql(
+        "SELECT key, value FROM settings", conn
+    ).set_index("key")["value"].to_dict()
+
+    reports = pd.read_sql(
+        """SELECT id, ref_number, manufacturer, period_start, period_end,
+                  generated_date, coupon_count, grand_total, status,
+                  sent_date, response_date, payment_amount, check_reference, notes
+           FROM reports
+           ORDER BY generated_date DESC, id DESC""",
+        conn,
+    )
+
+    if reports.empty:
+        st.info("No reports generated yet.")
+        conn.close()
+        return
+
+    # Filter controls
+    filter_col1, filter_col2 = st.columns(2)
+    with filter_col1:
+        all_mfrs = ["All"] + sorted(reports["manufacturer"].unique().tolist())
+        filter_mfr = st.selectbox("Filter by manufacturer", all_mfrs)
+    with filter_col2:
+        all_statuses = ["All"] + [STATUS_LABELS[s] for s in ["draft", "sent", "responded"]]
+        filter_status = st.selectbox("Filter by status", all_statuses)
+
+    if filter_mfr != "All":
+        reports = reports[reports["manufacturer"] == filter_mfr]
+    if filter_status != "All":
+        reverse_labels = {v: k for k, v in STATUS_LABELS.items()}
+        reports = reports[reports["status"] == reverse_labels[filter_status]]
+
+    st.caption(f"{len(reports)} report(s)")
+
+    for _, report in reports.iterrows():
+        report_id = int(report["id"])
+        status_label = STATUS_LABELS.get(report["status"], report["status"])
+
+        header = (
+            f"{report['ref_number']}  |  {report['manufacturer']}  |  "
+            f"{report['period_start']} to {report['period_end']}  |  "
+            f"${float(report['grand_total']):.2f}  |  {status_label}"
+        )
+
+        with st.expander(header):
+            detail_col, action_col = st.columns([2, 1])
+
+            with detail_col:
+                st.write(f"**Generated:** {report['generated_date']}")
+                st.write(f"**Coupons:** {report['coupon_count']}")
+                st.write(f"**Grand Total:** ${float(report['grand_total']):.2f}")
+                st.write(f"**Status:** {status_label}")
+
+                if report["sent_date"]:
+                    st.write(f"**Sent:** {report['sent_date']}")
+                if report["response_date"]:
+                    st.write(f"**Response received:** {report['response_date']}")
+                if report["payment_amount"] is not None:
+                    st.write(f"**Payment amount:** ${float(report['payment_amount']):.2f}")
+                if report["check_reference"]:
+                    st.write(f"**Check / reference:** {report['check_reference']}")
+                if report["notes"]:
+                    st.write(f"**Notes:** {report['notes']}")
+
+            with action_col:
+                pdf_bytes = _build_pdf_from_snapshot(report_id, conn, settings)
+                if pdf_bytes:
+                    filename = (
+                        f"coupon_report_{report['manufacturer'].replace(' ', '_')}"
+                        f"_{report['generated_date']}.pdf"
+                    )
+                    st.download_button(
+                        label="Download PDF",
+                        data=pdf_bytes,
+                        file_name=filename,
+                        mime="application/pdf",
+                        use_container_width=True,
+                        key=f"dl_{report_id}",
+                    )
+
+            st.divider()
+
+            with st.form(f"report_status_{report_id}"):
+                st.caption("Update status and response")
+
+                new_status = st.selectbox(
+                    "Status",
+                    options=list(STATUS_LABELS.keys()),
+                    format_func=lambda s: STATUS_LABELS[s],
+                    index=list(STATUS_LABELS.keys()).index(report["status"]),
+                    key=f"status_{report_id}",
+                )
+
+                fcol1, fcol2 = st.columns(2)
+                with fcol1:
+                    new_sent_date = st.date_input(
+                        "Sent Date",
+                        value=report["sent_date"] if report["sent_date"] else None,
+                        key=f"sent_{report_id}",
+                    )
+                    new_payment = st.number_input(
+                        "Payment Amount ($)",
+                        value=float(report["payment_amount"]) if report["payment_amount"] is not None else 0.0,
+                        min_value=0.0,
+                        step=0.01,
+                        format="%.2f",
+                        key=f"payment_{report_id}",
+                    )
+                with fcol2:
+                    new_response_date = st.date_input(
+                        "Response Date",
+                        value=report["response_date"] if report["response_date"] else None,
+                        key=f"resp_{report_id}",
+                    )
+                    new_check_ref = st.text_input(
+                        "Check / Reference Number",
+                        value=report["check_reference"] or "",
+                        key=f"check_{report_id}",
+                    )
+
+                new_notes = st.text_area(
+                    "Notes",
+                    value=report["notes"] or "",
+                    key=f"notes_{report_id}",
+                )
+
+                if st.form_submit_button("Save", use_container_width=True, type="primary"):
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        """UPDATE reports
+                           SET status          = %s,
+                               sent_date       = %s,
+                               response_date   = %s,
+                               payment_amount  = %s,
+                               check_reference = %s,
+                               notes           = %s
+                           WHERE id = %s""",
+                        (
+                            new_status,
+                            new_sent_date if new_sent_date else None,
+                            new_response_date if new_response_date else None,
+                            round(new_payment, 2) if new_payment else None,
+                            new_check_ref.strip() or None,
+                            new_notes.strip() or None,
+                            report_id,
+                        ),
+                    )
+                    conn.commit()
+                    cursor.close()
+                    st.success("Report updated.")
+                    st.rerun()
 
     conn.close()
 
@@ -381,7 +651,7 @@ def main() -> None:
 
     page = st.sidebar.radio(
         "Navigate",
-        ["Enter Coupons", "Generate Reports", "Manage Manufacturers", "Settings"],
+        ["Enter Coupons", "Generate Reports", "Report History", "Manage Manufacturers", "Settings"],
     )
 
     if st.sidebar.button("Sign out"):
@@ -391,6 +661,8 @@ def main() -> None:
         page_enter_coupons()
     elif page == "Generate Reports":
         page_generate_reports()
+    elif page == "Report History":
+        page_report_history()
     elif page == "Manage Manufacturers":
         page_manage_manufacturers()
     elif page == "Settings":
