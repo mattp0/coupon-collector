@@ -71,18 +71,104 @@ def page_enter_coupons() -> None:
     st.subheader("Recent Entries")
 
     recent = pd.read_sql(
-        """SELECT collected_date, manufacturer, coupon_id, amount, handling_fee
-           FROM coupons ORDER BY id DESC LIMIT 20""",
+        """SELECT id, collected_date, manufacturer, coupon_id, amount, handling_fee
+           FROM coupons ORDER BY id DESC LIMIT 50""",
         conn,
     )
 
     if recent.empty:
         st.info("No coupons entered yet.")
     else:
-        recent["amount"] = recent["amount"].apply(lambda x: f"${x:.2f}")
-        recent["handling_fee"] = recent["handling_fee"].apply(lambda x: "Yes" if x else "No")
-        recent.columns = ["Date", "Manufacturer", "Coupon ID", "Face Value", "Handling Fee"]
-        st.dataframe(recent, use_container_width=True, hide_index=True)
+        # Check if an edit is in progress
+        editing_id = st.session_state.get("editing_coupon_id")
+
+        for _, row in recent.iterrows():
+            row_id = int(row["id"])
+            col_date, col_mfr, col_cid, col_amt, col_fee, col_edit, col_del = st.columns(
+                [1.2, 1.5, 1.2, 0.8, 0.8, 0.6, 0.6]
+            )
+            col_date.write(str(row["collected_date"]))
+            col_mfr.write(row["manufacturer"])
+            col_cid.write(row["coupon_id"])
+            col_amt.write(f"${float(row['amount']):.2f}")
+            col_fee.write("Yes" if row["handling_fee"] else "No")
+
+            if col_edit.button("Edit", key=f"edit_{row_id}"):
+                st.session_state["editing_coupon_id"] = row_id
+                st.rerun()
+
+            if col_del.button("Delete", key=f"del_{row_id}"):
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM coupons WHERE id = %s", (row_id,))
+                conn.commit()
+                cursor.close()
+                st.success("Coupon deleted.")
+                st.rerun()
+
+            if editing_id == row_id:
+                with st.form(f"edit_form_{row_id}"):
+                    st.caption(f"Editing coupon #{row_id}")
+                    ecol1, ecol2 = st.columns(2)
+                    with ecol1:
+                        edit_mfr = st.selectbox(
+                            "Manufacturer",
+                            options,
+                            index=options.index(row["manufacturer"]) if row["manufacturer"] in options else 0,
+                            key=f"emfr_{row_id}",
+                        )
+                        edit_cid = st.text_input("Coupon ID", value=row["coupon_id"], key=f"ecid_{row_id}")
+                    with ecol2:
+                        edit_amt = st.number_input(
+                            "Face Value ($)", value=float(row["amount"]),
+                            min_value=0.0, step=0.01, format="%.2f", key=f"eamt_{row_id}",
+                        )
+                        edit_fee = st.checkbox(
+                            "Subject to handling fee ($0.08)",
+                            value=bool(row["handling_fee"]),
+                            key=f"efee_{row_id}",
+                        )
+                        edit_date = st.date_input(
+                            "Date Collected",
+                            value=row["collected_date"],
+                            key=f"edate_{row_id}",
+                        )
+
+                    save_col, cancel_col = st.columns([1, 1])
+                    with save_col:
+                        save = st.form_submit_button("Save Changes", use_container_width=True, type="primary")
+                    with cancel_col:
+                        cancel = st.form_submit_button("Cancel", use_container_width=True)
+
+                    if save:
+                        if not edit_cid.strip():
+                            st.error("Coupon ID is required.")
+                        elif edit_amt <= 0:
+                            st.error("Face value must be greater than $0.00.")
+                        else:
+                            cursor = conn.cursor()
+                            cursor.execute(
+                                """UPDATE coupons
+                                   SET manufacturer = %s, coupon_id = %s, amount = %s,
+                                       handling_fee = %s, collected_date = %s
+                                   WHERE id = %s""",
+                                (
+                                    edit_mfr.strip(),
+                                    edit_cid.strip(),
+                                    round(edit_amt, 2),
+                                    edit_fee,
+                                    edit_date,
+                                    row_id,
+                                ),
+                            )
+                            conn.commit()
+                            cursor.close()
+                            del st.session_state["editing_coupon_id"]
+                            st.success("Coupon updated.")
+                            st.rerun()
+
+                    if cancel:
+                        del st.session_state["editing_coupon_id"]
+                        st.rerun()
 
     conn.close()
 
