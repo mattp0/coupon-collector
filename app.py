@@ -428,6 +428,7 @@ def page_report_history() -> None:
             detail_col, action_col = st.columns([2, 1])
 
             with detail_col:
+                st.write(f"**Reference:** {report['ref_number']}")
                 st.write(f"**Generated:** {report['generated_date']}")
                 st.write(f"**Coupons:** {report['coupon_count']}")
                 st.write(f"**Grand Total:** ${float(report['grand_total']):.2f}")
@@ -459,6 +460,20 @@ def page_report_history() -> None:
                         use_container_width=True,
                         key=f"dl_{report_id}",
                     )
+
+                if report["status"] == "draft":
+                    if st.button(
+                        "Delete Draft",
+                        key=f"delete_{report_id}",
+                        type="secondary",
+                        use_container_width=True,
+                    ):
+                        cursor = conn.cursor()
+                        cursor.execute("DELETE FROM reports WHERE id = %s AND status = 'draft'", (report_id,))
+                        conn.commit()
+                        cursor.close()
+                        st.success("Draft report deleted.")
+                        st.rerun()
 
             st.divider()
 
