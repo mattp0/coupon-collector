@@ -439,9 +439,12 @@ def page_manage_manufacturers() -> None:
                         col_save, col_del = st.columns([3, 1])
                         with col_save:
                             if st.form_submit_button("Save Changes"):
-                                update_manufacturer(conn, int(row["id"]), edit_name.strip(), edit_addr.strip())
-                                st.success("Saved.")
-                                st.rerun()
+                                try:
+                                    update_manufacturer(conn, int(row["id"]), edit_name.strip(), edit_addr.strip())
+                                    st.success("Saved.")
+                                    st.rerun()
+                                except DuplicateNameError:
+                                    st.error("A manufacturer with that name already exists.")
                         with col_del:
                             if st.form_submit_button("Delete", type="secondary"):
                                 delete_manufacturer(conn, int(row["id"]))

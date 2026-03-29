@@ -93,7 +93,7 @@ def init_db() -> None:
                     total_face       NUMERIC(10, 2) NOT NULL,
                     total_handling   NUMERIC(10, 2) NOT NULL,
                     grand_total      NUMERIC(10, 2) NOT NULL,
-                    status           TEXT NOT NULL DEFAULT 'draft',
+                    status           TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'sent', 'responded')),
                     sent_date        DATE,
                     response_date    DATE,
                     payment_amount   NUMERIC(10, 2),
@@ -119,6 +119,21 @@ def init_db() -> None:
                     ('company_address', ''),
                     ('handling_fee',    '0.08')
                 ON CONFLICT (key) DO NOTHING
+            """)
+
+            cursor.execute("""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM pg_constraint
+                        WHERE conname = 'reports_status_check'
+                          AND conrelid = 'reports'::regclass
+                    ) THEN
+                        ALTER TABLE reports
+                            ADD CONSTRAINT reports_status_check
+                            CHECK (status IN ('draft', 'sent', 'responded'));
+                    END IF;
+                END $$
             """)
 
             for table in ("manufacturers", "coupons", "settings", "reports", "report_coupons"):
@@ -177,11 +192,14 @@ def add_manufacturer(conn, name: str, address: str) -> None:
 
 
 def update_manufacturer(conn, id: int, name: str, address: str) -> None:
-    with get_cursor(conn) as cur:
-        cur.execute(
-            "UPDATE manufacturers SET name = %s, address = %s WHERE id = %s",
-            (name, address, id),
-        )
+    try:
+        with get_cursor(conn) as cur:
+            cur.execute(
+                "UPDATE manufacturers SET name = %s, address = %s WHERE id = %s",
+                (name, address, id),
+            )
+    except psycopg2.errors.UniqueViolation:
+        raise DuplicateNameError(name)
 
 
 def delete_manufacturer(conn, id: int) -> None:
