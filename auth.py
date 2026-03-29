@@ -23,7 +23,7 @@ def require_login():
     """
     ALLOWED_EMAILS: set[str] = {
         "matthew.r.perry25@gmail.com",
-        # "bob@example.com",
+        "jennaperry307@gmail.com",
     }
 
     if not st.user.is_logged_in:
