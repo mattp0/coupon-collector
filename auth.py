@@ -26,16 +26,14 @@ def require_login():
         # "bob@example.com",
     }
 
-    user = st.experimental_user
- 
-    if not user.is_logged_in:
+    if not st.user.is_logged_in:
         st.login("google")
         st.stop()
-
-    if ALLOWED_EMAILS and user.email not in ALLOWED_EMAILS:
+ 
+    if ALLOWED_EMAILS and st.user.email not in ALLOWED_EMAILS:
         st.error(
-            f"Access denied. The account {user.email} is not authorised to use this application."
+            f"Access denied. The account {st.user.email} is not authorised to use this application."
         )
         st.stop()
 
-    return user
+    return st.user
