@@ -99,6 +99,7 @@ def generate_pdf(
     story.append(HRFlowable(width="100%", thickness=1.5, color=MID_BLUE, spaceAfter=14))
 
     # --- Coupon table ---
+    # Columns: 0=#  1=CouponID  2=Date  3=FaceValue  4=HandlingFee  5=LineTotal
     handling_fee_val = float(company_settings.get("handling_fee", "0.08"))
 
     col_header_style = ParagraphStyle(
@@ -112,6 +113,22 @@ def generate_pdf(
     cell_right = ParagraphStyle(
         "cell_r", fontName="Helvetica", fontSize=9,
         textColor=TEXT_DARK, alignment=TA_RIGHT,
+    )
+    subtotal_label = ParagraphStyle(
+        "sub_label", fontName="Helvetica-Bold", fontSize=9,
+        textColor=TEXT_DARK, alignment=TA_RIGHT,
+    )
+    subtotal_val = ParagraphStyle(
+        "sub_val", fontName="Helvetica-Bold", fontSize=9,
+        textColor=TEXT_DARK, alignment=TA_RIGHT,
+    )
+    grand_label = ParagraphStyle(
+        "grand_label", fontName="Helvetica-Bold", fontSize=10,
+        textColor=WHITE, alignment=TA_RIGHT,
+    )
+    grand_val = ParagraphStyle(
+        "grand_val", fontName="Helvetica-Bold", fontSize=10,
+        textColor=WHITE, alignment=TA_RIGHT,
     )
 
     table_data = [[
@@ -134,74 +151,65 @@ def generate_pdf(
         total_handling += h_fee
 
         table_data.append([
-            Paragraph(str(i),                              cell_right),
-            Paragraph(str(row["coupon_id"]),               cell_left),
-            Paragraph(str(row["collected_date"]),          cell_left),
-            Paragraph(f"${face:.2f}",                      cell_right),
-            Paragraph(f"${h_fee:.2f}" if h_fee else "-",  cell_right),
-            Paragraph(f"${line_t:.2f}",                    cell_right),
+            Paragraph(str(i),                             cell_right),
+            Paragraph(str(row["coupon_id"]),              cell_left),
+            Paragraph(str(row["collected_date"]),         cell_left),
+            Paragraph(f"${face:.2f}",                     cell_right),
+            Paragraph(f"${h_fee:.2f}" if h_fee else "-", cell_right),
+            Paragraph(f"${line_t:.2f}",                   cell_right),
         ])
 
     grand_total = total_face + total_handling
 
-    subtotal_label = ParagraphStyle(
-        "sub_label", fontName="Helvetica-Bold", fontSize=9,
-        textColor=TEXT_DARK, alignment=TA_RIGHT,
-    )
-    subtotal_val = ParagraphStyle(
-        "sub_val", fontName="Helvetica-Bold", fontSize=9,
-        textColor=TEXT_DARK, alignment=TA_RIGHT,
-    )
-    grand_label = ParagraphStyle(
-        "grand_label", fontName="Helvetica-Bold", fontSize=10,
-        textColor=WHITE, alignment=TA_RIGHT,
-    )
-    grand_val = ParagraphStyle(
-        "grand_val", fontName="Helvetica-Bold", fontSize=10,
-        textColor=WHITE, alignment=TA_RIGHT,
-    )
-
+    # Total rows: cols 0-3 are spanned (empty), col 4 = label, col 5 = value.
+    # This keeps label and value visually aligned under the data columns.
     table_data += [
-        ["", "", "", Paragraph("Total Face Value:",      subtotal_label), "",
-                     Paragraph(f"${total_face:.2f}",     subtotal_val)],
-        ["", "", "", Paragraph("Total Handling Fees:",   subtotal_label), "",
-                     Paragraph(f"${total_handling:.2f}", subtotal_val)],
-        ["", "", "", Paragraph("Grand Total:",           grand_label), "",
-                     Paragraph(f"${grand_total:.2f}",    grand_val)],
+        ["", "", "", "",
+         Paragraph("Total Face Value:",      subtotal_label),
+         Paragraph(f"${total_face:.2f}",     subtotal_val)],
+        ["", "", "", "",
+         Paragraph("Total Handling Fees:",   subtotal_label),
+         Paragraph(f"${total_handling:.2f}", subtotal_val)],
+        ["", "", "", "",
+         Paragraph("Grand Total:",           grand_label),
+         Paragraph(f"${grand_total:.2f}",    grand_val)],
     ]
 
     n_rows   = len(table_data)
     n_totals = 3
 
-    col_widths = [0.4 * inch, 1.6 * inch, 1.1 * inch, 1.1 * inch, 1.1 * inch, 1.1 * inch]
+    col_widths = [0.4 * inch, 1.6 * inch, 1.1 * inch, 1.1 * inch, 1.4 * inch, 1.1 * inch]
     t = Table(table_data, colWidths=col_widths, repeatRows=1)
     t.setStyle(TableStyle([
         # Header row
-        ("BACKGROUND",    (0, 0), (-1, 0), MID_BLUE),
-        ("TOPPADDING",    (0, 0), (-1, 0), 8),
-        ("BOTTOMPADDING", (0, 0), (-1, 0), 8),
-        ("LEFTPADDING",   (0, 0), (-1, 0), 6),
-        ("RIGHTPADDING",  (0, 0), (-1, 0), 6),
+        ("BACKGROUND",     (0, 0), (-1, 0), MID_BLUE),
+        ("TOPPADDING",     (0, 0), (-1, 0), 8),
+        ("BOTTOMPADDING",  (0, 0), (-1, 0), 8),
+        ("LEFTPADDING",    (0, 0), (-1, 0), 6),
+        ("RIGHTPADDING",   (0, 0), (-1, 0), 6),
         # Data rows
-        ("TOPPADDING",    (0, 1), (-1, n_rows - n_totals - 1), 6),
-        ("BOTTOMPADDING", (0, 1), (-1, n_rows - n_totals - 1), 6),
-        ("LEFTPADDING",   (0, 1), (-1, n_rows - n_totals - 1), 6),
-        ("RIGHTPADDING",  (0, 1), (-1, n_rows - n_totals - 1), 6),
+        ("TOPPADDING",     (0, 1), (-1, n_rows - n_totals - 1), 6),
+        ("BOTTOMPADDING",  (0, 1), (-1, n_rows - n_totals - 1), 6),
+        ("LEFTPADDING",    (0, 1), (-1, n_rows - n_totals - 1), 6),
+        ("RIGHTPADDING",   (0, 1), (-1, n_rows - n_totals - 1), 6),
         ("ROWBACKGROUNDS", (0, 1), (-1, n_rows - n_totals - 1), [WHITE, LIGHT_GREY]),
-        ("GRID",          (0, 0), (-1, n_rows - n_totals - 1), 0.4, MID_GREY),
-        # Subtotal rows
-        ("BACKGROUND",    (0, n_rows - n_totals), (-1, n_rows - 2), ACCENT),
-        ("TOPPADDING",    (0, n_rows - n_totals), (-1, n_rows - 2), 6),
-        ("BOTTOMPADDING", (0, n_rows - n_totals), (-1, n_rows - 2), 6),
-        ("LINEABOVE",     (0, n_rows - n_totals), (-1, n_rows - n_totals), 1, MID_BLUE),
-        # Grand total row
-        ("BACKGROUND",    (0, n_rows - 1), (-1, n_rows - 1), DARK_BLUE),
-        ("TOPPADDING",    (0, n_rows - 1), (-1, n_rows - 1), 8),
-        ("BOTTOMPADDING", (0, n_rows - 1), (-1, n_rows - 1), 8),
-        # Span label and empty cells in total rows
-        ("SPAN", (0, n_rows - 3), (3, n_rows - 3)),
-        ("SPAN", (0, n_rows - 2), (3, n_rows - 2)),
-        ("SPAN", (0, n_rows - 1), (3, n_rows - 1)),
+        ("GRID",           (0, 0), (-1, n_rows - n_totals - 1), 0.4, MID_GREY),
+        # Subtotal rows: span cols 0-3, label col 4, value col 5
+        ("BACKGROUND",     (0, n_rows - n_totals), (-1, n_rows - 2), ACCENT),
+        ("TOPPADDING",     (0, n_rows - n_totals), (-1, n_rows - 2), 6),
+        ("BOTTOMPADDING",  (0, n_rows - n_totals), (-1, n_rows - 2), 6),
+        ("LEFTPADDING",    (0, n_rows - n_totals), (-1, n_rows - 2), 6),
+        ("RIGHTPADDING",   (0, n_rows - n_totals), (-1, n_rows - 2), 6),
+        ("LINEABOVE",      (0, n_rows - n_totals), (-1, n_rows - n_totals), 1, MID_BLUE),
+        ("SPAN",           (0, n_rows - 3), (3, n_rows - 3)),
+        ("SPAN",           (0, n_rows - 2), (3, n_rows - 2)),
+        # Grand total row: same span structure, dark background
+        ("BACKGROUND",     (0, n_rows - 1), (-1, n_rows - 1), DARK_BLUE),
+        ("TOPPADDING",     (0, n_rows - 1), (-1, n_rows - 1), 8),
+        ("BOTTOMPADDING",  (0, n_rows - 1), (-1, n_rows - 1), 8),
+        ("LEFTPADDING",    (0, n_rows - 1), (-1, n_rows - 1), 6),
+        ("RIGHTPADDING",   (0, n_rows - 1), (-1, n_rows - 1), 6),
+        ("SPAN",           (0, n_rows - 1), (3, n_rows - 1)),
     ]))
 
     story.append(t)
