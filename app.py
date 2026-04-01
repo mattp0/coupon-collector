@@ -77,6 +77,7 @@ def page_enter_coupons() -> None:
 
             with col2:
                 amount = st.number_input("Face Value ($)", min_value=0.0, step=0.01, format="%.2f")
+                quantity = st.number_input("Quantity", min_value=1, step=1, value=1)
                 handling_fee = st.checkbox("Subject to handling fee ($0.08)")
                 collected_date = st.date_input("Date Collected", value=date.today())
 
@@ -92,7 +93,7 @@ def page_enter_coupons() -> None:
                 else:
                     if mfr_select == NEW_MANUFACTURER_SENTINEL and manufacturer.strip():
                         upsert_manufacturer_name(conn, manufacturer.strip())
-                    add_coupon(conn, manufacturer.strip(), coupon_id.strip(), amount, handling_fee, collected_date)
+                    add_coupon(conn, manufacturer.strip(), coupon_id.strip(), amount, handling_fee, collected_date, quantity)
                     st.success(f"Coupon {coupon_id} added for {manufacturer}.")
 
         st.divider()
@@ -107,12 +108,13 @@ def page_enter_coupons() -> None:
 
             for _, row in recent.iterrows():
                 row_id = int(row["id"])
-                col_date, col_mfr, col_cid, col_amt, col_fee, col_edit, col_del = st.columns(
-                    [1.2, 1.5, 1.2, 0.8, 0.8, 0.6, 0.6]
+                col_date, col_mfr, col_cid, col_qty, col_amt, col_fee, col_edit, col_del = st.columns(
+                    [1.2, 1.5, 1.2, 0.5, 0.8, 0.8, 0.6, 0.6]
                 )
                 col_date.write(str(row["collected_date"]))
                 col_mfr.write(row["manufacturer"])
                 col_cid.write(row["coupon_id"])
+                col_qty.write(str(int(row["quantity"])))
                 col_amt.write(f"${float(row['amount']):.2f}")
                 col_fee.write("Yes" if row["handling_fee"] else "No")
 
@@ -142,6 +144,10 @@ def page_enter_coupons() -> None:
                                 "Face Value ($)", value=float(row["amount"]),
                                 min_value=0.0, step=0.01, format="%.2f", key=f"eamt_{row_id}",
                             )
+                            edit_qty = st.number_input(
+                                "Quantity", value=int(row["quantity"]),
+                                min_value=1, step=1, key=f"eqty_{row_id}",
+                            )
                             edit_fee = st.checkbox(
                                 "Subject to handling fee ($0.08)",
                                 value=bool(row["handling_fee"]),
@@ -165,7 +171,7 @@ def page_enter_coupons() -> None:
                             elif edit_amt <= 0:
                                 st.error("Face value must be greater than $0.00.")
                             else:
-                                update_coupon(conn, row_id, edit_mfr.strip(), edit_cid.strip(), edit_amt, edit_fee, edit_date)
+                                update_coupon(conn, row_id, edit_mfr.strip(), edit_cid.strip(), edit_amt, edit_fee, edit_date, edit_qty)
                                 del st.session_state["editing_coupon_id"]
                                 st.success("Coupon updated.")
                                 st.rerun()
@@ -203,17 +209,19 @@ def page_generate_reports() -> None:
             st.stop()
 
         st.subheader(f"Preview - {selected_mfr}")
-        st.caption(f"Period: {start_date} to {end_date}  |  {len(df)} coupon(s)")
+        st.caption(f"Period: {start_date} to {end_date}  |  {int(df['quantity'].sum())} coupon(s)")
 
-        display = df.copy()
+        display = df[["coupon_id", "quantity", "amount", "handling_fee", "collected_date"]].copy()
         display["amount"] = display["amount"].apply(lambda x: f"${x:.2f}")
         display["handling_fee"] = display["handling_fee"].apply(lambda x: "$0.08" if x else "-")
-        display.columns = ["Coupon ID", "Face Value", "Handling Fee", "Date"]
+        display.columns = ["Coupon ID", "Qty", "Face Value", "Handling Fee", "Date"]
         st.dataframe(display, use_container_width=True, hide_index=True)
 
         handling_fee_rate = float(settings.get("handling_fee", "0.08"))
-        total_face = float(df["amount"].sum())
-        total_handling = float(df["handling_fee"].apply(lambda x: handling_fee_rate if x else 0.0).sum())
+        total_face = float((df["amount"] * df["quantity"]).sum())
+        total_handling = float(df.apply(
+            lambda r: handling_fee_rate * r["quantity"] if r["handling_fee"] else 0.0, axis=1
+        ).sum())
         grand_total = total_face + total_handling
 
         c1, c2, c3 = st.columns(3)

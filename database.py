@@ -125,6 +125,30 @@ def init_db() -> None:
                 DO $$
                 BEGIN
                     IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'coupons' AND column_name = 'quantity'
+                    ) THEN
+                        ALTER TABLE coupons ADD COLUMN quantity INTEGER NOT NULL DEFAULT 1;
+                    END IF;
+                END $$
+            """)
+
+            cursor.execute("""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'report_coupons' AND column_name = 'quantity'
+                    ) THEN
+                        ALTER TABLE report_coupons ADD COLUMN quantity INTEGER NOT NULL DEFAULT 1;
+                    END IF;
+                END $$
+            """)
+
+            cursor.execute("""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
                         SELECT 1 FROM pg_constraint
                         WHERE conname = 'reports_status_check'
                           AND conrelid = 'reports'::regclass
@@ -213,7 +237,7 @@ def delete_manufacturer(conn, id: int) -> None:
 
 def get_recent_coupons(conn) -> pd.DataFrame:
     return pd.read_sql(
-        """SELECT id, collected_date, manufacturer, coupon_id, amount, handling_fee
+        """SELECT id, collected_date, manufacturer, coupon_id, amount, handling_fee, quantity
            FROM coupons ORDER BY id DESC LIMIT 50""",
         conn,
     )
@@ -221,7 +245,7 @@ def get_recent_coupons(conn) -> pd.DataFrame:
 
 def get_coupons_for_period(conn, manufacturer: str, start: date, end: date) -> pd.DataFrame:
     return pd.read_sql(
-        """SELECT coupon_id, amount, handling_fee, collected_date
+        """SELECT coupon_id, amount, handling_fee, collected_date, quantity
            FROM coupons
            WHERE manufacturer = %s AND collected_date BETWEEN %s AND %s
            ORDER BY coupon_id, collected_date""",
@@ -237,12 +261,13 @@ def add_coupon(
     amount: float,
     handling_fee: bool,
     collected_date: date,
+    quantity: int = 1,
 ) -> None:
     with get_cursor(conn) as cur:
         cur.execute(
-            """INSERT INTO coupons (manufacturer, coupon_id, amount, handling_fee, collected_date)
-               VALUES (%s, %s, %s, %s, %s)""",
-            (manufacturer, coupon_id, round(amount, 2), handling_fee, collected_date),
+            """INSERT INTO coupons (manufacturer, coupon_id, amount, handling_fee, collected_date, quantity)
+               VALUES (%s, %s, %s, %s, %s, %s)""",
+            (manufacturer, coupon_id, round(amount, 2), handling_fee, collected_date, quantity),
         )
 
 
@@ -254,14 +279,15 @@ def update_coupon(
     amount: float,
     handling_fee: bool,
     collected_date: date,
+    quantity: int = 1,
 ) -> None:
     with get_cursor(conn) as cur:
         cur.execute(
             """UPDATE coupons
                SET manufacturer = %s, coupon_id = %s, amount = %s,
-                   handling_fee = %s, collected_date = %s
+                   handling_fee = %s, collected_date = %s, quantity = %s
                WHERE id = %s""",
-            (manufacturer, coupon_id, round(amount, 2), handling_fee, collected_date, id),
+            (manufacturer, coupon_id, round(amount, 2), handling_fee, collected_date, quantity, id),
         )
 
 
@@ -337,7 +363,7 @@ def save_report(
                 period_start,
                 period_end,
                 date.today(),
-                len(coupons),
+                int(coupons["quantity"].sum()),
                 round(total_face, 2),
                 round(total_handling, 2),
                 round(grand_total, 2),
@@ -348,14 +374,15 @@ def save_report(
         for _, row in coupons.iterrows():
             cur.execute(
                 """INSERT INTO report_coupons
-                       (report_id, coupon_id, amount, handling_fee, collected_date)
-                   VALUES (%s, %s, %s, %s, %s)""",
+                       (report_id, coupon_id, amount, handling_fee, collected_date, quantity)
+                   VALUES (%s, %s, %s, %s, %s, %s)""",
                 (
                     report_id,
                     str(row["coupon_id"]),
                     float(row["amount"]),
                     bool(row["handling_fee"]),
                     row["collected_date"],
+                    int(row["quantity"]),
                 ),
             )
 
@@ -411,7 +438,7 @@ def get_report_for_pdf(conn, report_id: int) -> Optional[tuple]:
         return None
 
     snapshot = pd.read_sql(
-        """SELECT coupon_id, amount, handling_fee, collected_date
+        """SELECT coupon_id, amount, handling_fee, collected_date, quantity
            FROM report_coupons WHERE report_id = %s
            ORDER BY coupon_id, collected_date""",
         conn,

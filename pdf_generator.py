@@ -134,6 +134,7 @@ def generate_pdf(
     table_data = [[
         Paragraph("#",            col_header_style),
         Paragraph("Coupon ID",    col_header_style),
+        Paragraph("Qty",          col_header_style),
         Paragraph("Date",         col_header_style),
         Paragraph("Face Value",   col_header_style),
         Paragraph("Handling Fee", col_header_style),
@@ -144,15 +145,17 @@ def generate_pdf(
     total_handling = 0.0
 
     for i, (_, row) in enumerate(coupons.iterrows(), start=1):
+        qty    = int(row["quantity"])
         face   = float(row["amount"])
         h_fee  = handling_fee_val if row["handling_fee"] else 0.0
-        line_t = face + h_fee
-        total_face     += face
-        total_handling += h_fee
+        line_t = qty * (face + h_fee)
+        total_face     += qty * face
+        total_handling += qty * h_fee
 
         table_data.append([
             Paragraph(str(i),                             cell_right),
             Paragraph(str(row["coupon_id"]),              cell_left),
+            Paragraph(str(qty),                           cell_right),
             Paragraph(str(row["collected_date"]),         cell_left),
             Paragraph(f"${face:.2f}",                     cell_right),
             Paragraph(f"${h_fee:.2f}" if h_fee else "-", cell_right),
@@ -161,16 +164,15 @@ def generate_pdf(
 
     grand_total = total_face + total_handling
 
-    # Total rows: cols 0-3 are spanned (empty), col 4 = label, col 5 = value.
-    # This keeps label and value visually aligned under the data columns.
+    # Total rows: cols 0-4 are spanned (empty), col 5 = label, col 6 = value.
     table_data += [
-        ["", "", "", "",
+        ["", "", "", "", "",
          Paragraph("Total Face Value:",      subtotal_label),
          Paragraph(f"${total_face:.2f}",     subtotal_val)],
-        ["", "", "", "",
+        ["", "", "", "", "",
          Paragraph("Total Handling Fees:",   subtotal_label),
          Paragraph(f"${total_handling:.2f}", subtotal_val)],
-        ["", "", "", "",
+        ["", "", "", "", "",
          Paragraph("Grand Total:",           grand_label),
          Paragraph(f"${grand_total:.2f}",    grand_val)],
     ]
@@ -178,7 +180,7 @@ def generate_pdf(
     n_rows   = len(table_data)
     n_totals = 3
 
-    col_widths = [0.4 * inch, 1.6 * inch, 1.1 * inch, 1.1 * inch, 1.4 * inch, 1.1 * inch]
+    col_widths = [0.35 * inch, 1.5 * inch, 0.45 * inch, 1.0 * inch, 1.0 * inch, 1.1 * inch, 1.1 * inch]
     t = Table(table_data, colWidths=col_widths, repeatRows=1)
     t.setStyle(TableStyle([
         # Header row
@@ -201,15 +203,15 @@ def generate_pdf(
         ("LEFTPADDING",    (0, n_rows - n_totals), (-1, n_rows - 2), 6),
         ("RIGHTPADDING",   (0, n_rows - n_totals), (-1, n_rows - 2), 6),
         ("LINEABOVE",      (0, n_rows - n_totals), (-1, n_rows - n_totals), 1, MID_BLUE),
-        ("SPAN",           (0, n_rows - 3), (3, n_rows - 3)),
-        ("SPAN",           (0, n_rows - 2), (3, n_rows - 2)),
+        ("SPAN",           (0, n_rows - 3), (4, n_rows - 3)),
+        ("SPAN",           (0, n_rows - 2), (4, n_rows - 2)),
         # Grand total row: same span structure, dark background
         ("BACKGROUND",     (0, n_rows - 1), (-1, n_rows - 1), DARK_BLUE),
         ("TOPPADDING",     (0, n_rows - 1), (-1, n_rows - 1), 8),
         ("BOTTOMPADDING",  (0, n_rows - 1), (-1, n_rows - 1), 8),
         ("LEFTPADDING",    (0, n_rows - 1), (-1, n_rows - 1), 6),
         ("RIGHTPADDING",   (0, n_rows - 1), (-1, n_rows - 1), 6),
-        ("SPAN",           (0, n_rows - 1), (3, n_rows - 1)),
+        ("SPAN",           (0, n_rows - 1), (4, n_rows - 1)),
     ]))
 
     story.append(t)
@@ -219,7 +221,7 @@ def generate_pdf(
     story.append(HRFlowable(width="100%", thickness=0.5, color=MID_GREY, spaceBefore=4, spaceAfter=8))
     story.append(Paragraph(
         f"This report was generated on {date.today().strftime('%B %d, %Y')}. "
-        f"Total of {len(coupons)} coupon(s) enclosed for {manufacturer}.",
+        f"Total of {int(coupons['quantity'].sum())} coupon(s) enclosed for {manufacturer}.",
         ParagraphStyle(
             "footer", fontName="Helvetica-Oblique", fontSize=8,
             textColor=TEXT_MUTED, alignment=TA_CENTER,
